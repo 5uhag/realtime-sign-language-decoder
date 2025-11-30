@@ -8,9 +8,17 @@ import streamlit.components.v1 as components
 import pickle
 import warnings
 import os
+import base64
 
 # --- CONFIG ---
 st.set_page_config(layout="wide", page_title="Live Sign Language")
+
+# --- HELPER: WHITE BOX IMAGES ---
+def get_image_html(file_path):
+    with open(file_path, "rb") as f:
+        data = f.read()
+    b64_data = base64.b64encode(data).decode()
+    return f'<img src="data:image/svg+xml;base64,{b64_data}" width="100%" style="background-color: white; padding: 10px; border-radius: 10px; border: 2px solid #333;">'
 
 # --- LOAD MODEL ---
 model = None
@@ -26,6 +34,14 @@ try:
         load_status = "File Missing"
 except Exception as e:
     load_status = f"Error: {str(e)[:20]}"
+
+# --- DICTIONARY TO TRANSLATE NUMBERS TO LETTERS ---
+# If the model predicts "0", we show "A", etc.
+labels_dict = {
+    0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G', 7: 'H', 8: 'I',
+    9: 'J', 10: 'K', 11: 'L', 12: 'M', 13: 'N', 14: 'O', 15: 'P', 16: 'Q',
+    17: 'R', 18: 'S', 19: 'T', 20: 'U', 21: 'V', 22: 'W', 23: 'X', 24: 'Y', 25: 'Z'
+}
 
 st.title("🤝 Two-Way Sign Language Translator")
 tab1, tab2 = st.tabs(["📷 Live Sign Detector", "🔤 Text to Sign"])
@@ -58,9 +74,7 @@ with tab1:
                 results = self.hands.process(img_rgb)
                 
                 predicted_char = ""
-                status_text = "Wait..."
-                color = (0, 0, 255)
-
+                
                 if results.multi_hand_landmarks:
                     for hand_landmarks in results.multi_hand_landmarks:
                         self.mp_draw.draw_landmarks(img, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
@@ -82,20 +96,22 @@ with tab1:
                         if model:
                             try:
                                 prediction = model.predict([data_aux])
-                                predicted_char = prediction[0]
+                                
+                                # HERE IS THE FIX: Convert Number -> Letter
+                                # If prediction is '0', it looks up labels_dict[0] which is 'A'
+                                raw_output = int(prediction[0])
+                                predicted_char = labels_dict[raw_output]
+                                
                                 cv2.rectangle(img, (0, 0), (160, 60), (0, 0, 0), -1)
                                 cv2.putText(img, predicted_char, (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
-                                status_text = "Active"
-                                color = (0, 255, 0)
                             except:
-                                status_text = "Shape Err"
-                                color = (0, 255, 255)
+                                # Fallback if dictionary fails
+                                cv2.putText(img, str(prediction[0]), (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
 
-                cv2.putText(img, status_text, (10, img.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                 return av.VideoFrame.from_ndarray(img, format="bgr24")
 
         webrtc_streamer(key="sign-language", mode=WebRtcMode.SENDRECV, video_processor_factory=HandDetectorProcessor, media_stream_constraints={"video": True, "audio": False}, async_processing=True)
-
+    
     components.html(
         """<script>
         document.addEventListener('keydown', function(e) {
@@ -114,18 +130,17 @@ with tab1:
 with tab2:
     st.header("Text to Sign Language")
     st.write("Enter a word to translate it into sign language.")
-    
     user_input = st.text_input("Type here (A-Z):", "").lower()
     
     if user_input:
         cols = st.columns(6)
         for i, char in enumerate(user_input):
             if 'a' <= char <= 'z':
-                # LOOK FOR .svg FILES IN THE 'asl_images' FOLDER
                 img_path = f"asl_images/{char}.svg"
-                
                 if os.path.exists(img_path):
-                    cols[i % 6].image(img_path, caption=char.upper(), width=100)
+                    html_code = get_image_html(img_path)
+                    cols[i % 6].markdown(html_code, unsafe_allow_html=True)
+                    cols[i % 6].caption(char.upper())
                 else:
                     cols[i % 6].error(f"Missing: {char.upper()}")
             elif char == " ":
