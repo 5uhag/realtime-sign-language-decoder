@@ -4,9 +4,10 @@ import numpy as np
 import mediapipe as mp
 import av
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
-import streamlit.components.v1 as components  # Import this for the JS magic
+import streamlit.components.v1 as components
 
-# ... (Keep your ASL_IMAGES dictionary and setup code at the top) ...
+# --- CONFIG ---
+st.set_page_config(layout="wide", page_title="Live Sign Language")
 
 st.title("🤝 Two-Way Sign Language Translator")
 tab1, tab2 = st.tabs(["📷 Live Sign Detector", "🔤 Text to Sign"])
@@ -17,15 +18,12 @@ tab1, tab2 = st.tabs(["📷 Live Sign Detector", "🔤 Text to Sign"])
 with tab1:
     st.header("Real-Time Hand Tracking")
     
-    # 1. LAYOUT CONTROL: Create 3 columns [Spacer, Video, Spacer]
-    # The middle column is '3' units wide, the sides are '1'. 
-    # This centers the video and makes it smaller.
-    col1, col2, col3 = st.columns([1, 3, 1])
+    # Layout: [Spacer, Video, Spacer] to center and resize the video
+    col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        st.markdown("**Press 'f' for Fullscreen | 'Esc' to Exit**")
+        st.caption("Press 'f' for Fullscreen | 'Esc' to Exit")
 
-        # ... (Keep your HandDetectorProcessor class exactly the same) ...
         class HandDetectorProcessor(VideoProcessorBase):
             def __init__(self):
                 self.mp_hands = mp.solutions.hands
@@ -37,7 +35,7 @@ with tab1:
                 )
 
             def detect_gesture(self, landmarks):
-                # ... (Paste your existing detect_gesture code here) ...
+                # Finger states (1 = Open, 0 = Closed)
                 thumb_tip = landmarks[4].x
                 thumb_ip = landmarks[3].x
                 index_tip = landmarks[8].y
@@ -50,13 +48,14 @@ with tab1:
                 pinky_pip = landmarks[18].y
 
                 fingers = []
-                # Simple logic (assuming right hand)
+                # Thumb logic (Simple X-axis check for right hand)
                 fingers.append(1 if thumb_tip < thumb_ip else 0)
                 fingers.append(1 if index_tip < index_pip else 0)
                 fingers.append(1 if middle_tip < middle_pip else 0)
                 fingers.append(1 if ring_tip < ring_pip else 0)
                 fingers.append(1 if pinky_tip < pinky_pip else 0)
 
+                # Gesture Rules
                 if fingers == [0, 1, 1, 0, 0]:
                     return "VICTORY (V)"
                 elif fingers == [1, 1, 1, 1, 1]:
@@ -81,13 +80,13 @@ with tab1:
                         self.mp_draw.draw_landmarks(img, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
                         gesture_text = self.detect_gesture(hand_landmarks.landmark)
                         
-                        # Draw text with a black border for visibility
+                        # Draw Text (Black Border + Green Text)
                         cv2.putText(img, gesture_text, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 5)
                         cv2.putText(img, gesture_text, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                 return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-        # 2. RENDER VIDEO INSIDE THE MIDDLE COLUMN
+        # Start the video streamer inside the centered column
         webrtc_streamer(
             key="sign-language",
             mode=WebRtcMode.SENDRECV,
@@ -96,8 +95,7 @@ with tab1:
             async_processing=True,
         )
 
-    # 3. JAVASCRIPT INJECTION (The "Magic" Part)
-    # This script runs in the browser. It listens for 'f', finds the video, and fullscreens it.
+    # Javascript for Fullscreen ('f' key)
     components.html(
         """
         <script>
@@ -105,13 +103,9 @@ with tab1:
             if (e.key === 'f' || e.key === 'F') {
                 const video = parent.document.querySelector('video');
                 if (video) {
-                    if (video.requestFullscreen) {
-                        video.requestFullscreen();
-                    } else if (video.webkitRequestFullscreen) { /* Safari */
-                        video.webkitRequestFullscreen();
-                    } else if (video.msRequestFullscreen) { /* IE11 */
-                        video.msRequestFullscreen();
-                    }
+                    if (video.requestFullscreen) { video.requestFullscreen(); }
+                    else if (video.webkitRequestFullscreen) { video.webkitRequestFullscreen(); }
+                    else if (video.msRequestFullscreen) { video.msRequestFullscreen(); }
                 }
             }
         });
@@ -120,4 +114,23 @@ with tab1:
         height=0, width=0
     )
 
-# ... (Keep Tab 2 exactly as it was) ...
+# ==========================
+# TAB 2: TEXT TO SIGN
+# ==========================
+with tab2:
+    st.header("Text to Sign Language")
+    st.write("Enter a word to translate it into sign language.")
+    
+    # Use reliable GitHub-hosted images to avoid 403 errors
+    BASE_URL = "https://raw.githubusercontent.com/cloud-computer/ASL/master/data/asl_alphabet_train/asl_alphabet_train"
+    
+    user_input = st.text_input("Type here (A-Z):", "").upper()
+    
+    if user_input:
+        cols = st.columns(6) # Grid layout
+        for i, char in enumerate(user_input):
+            if 'A' <= char <= 'Z':
+                img_url = f"{BASE_URL}/{char}/{char}1.jpg"
+                cols[i % 6].image(img_url, caption=char, width=100)
+            elif char == " ":
+                cols[i % 6].write("   ")
