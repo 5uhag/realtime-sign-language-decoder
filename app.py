@@ -5,54 +5,44 @@ import mediapipe as mp
 import av
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 import streamlit.components.v1 as components
+import pickle
+import warnings
+import os
 
 # --- CONFIG ---
 st.set_page_config(layout="wide", page_title="Live Sign Language")
 
-# Dictionary of Reliable Wikipedia URLs
-ASL_IMAGES = {
-    'a': 'https://upload.wikimedia.org/wikipedia/commons/2/27/Sign_language_a.svg',
-    'b': 'https://upload.wikimedia.org/wikipedia/commons/1/18/Sign_language_b.svg',
-    'c': 'https://upload.wikimedia.org/wikipedia/commons/e/e3/Sign_language_c.svg',
-    'd': 'https://upload.wikimedia.org/wikipedia/commons/0/06/Sign_language_d.svg',
-    'e': 'https://upload.wikimedia.org/wikipedia/commons/c/cd/Sign_language_e.svg',
-    'f': 'https://upload.wikimedia.org/wikipedia/commons/8/8f/Sign_language_f.svg',
-    'g': 'https://upload.wikimedia.org/wikipedia/commons/d/d9/Sign_language_g.svg',
-    'h': 'https://upload.wikimedia.org/wikipedia/commons/9/97/Sign_language_h.svg',
-    'i': 'https://upload.wikimedia.org/wikipedia/commons/6/6a/Sign_language_i.svg',
-    'j': 'https://upload.wikimedia.org/wikipedia/commons/b/b1/Sign_language_j.svg',
-    'k': 'https://upload.wikimedia.org/wikipedia/commons/9/97/Sign_language_k.svg',
-    'l': 'https://upload.wikimedia.org/wikipedia/commons/d/d2/Sign_language_l.svg',
-    'm': 'https://upload.wikimedia.org/wikipedia/commons/c/c4/Sign_language_m.svg',
-    'n': 'https://upload.wikimedia.org/wikipedia/commons/e/e6/Sign_language_n.svg',
-    'o': 'https://upload.wikimedia.org/wikipedia/commons/e/e0/Sign_language_o.svg',
-    'p': 'https://upload.wikimedia.org/wikipedia/commons/0/08/Sign_language_p.svg',
-    'q': 'https://upload.wikimedia.org/wikipedia/commons/d/d4/Sign_language_q.svg',
-    'r': 'https://upload.wikimedia.org/wikipedia/commons/1/14/Sign_language_r.svg',
-    's': 'https://upload.wikimedia.org/wikipedia/commons/3/33/Sign_language_s.svg',
-    't': 'https://upload.wikimedia.org/wikipedia/commons/1/13/Sign_language_t.svg',
-    'u': 'https://upload.wikimedia.org/wikipedia/commons/d/d6/Sign_language_u.svg',
-    'v': 'https://upload.wikimedia.org/wikipedia/commons/3/3d/Sign_language_v.svg',
-    'w': 'https://upload.wikimedia.org/wikipedia/commons/5/5c/Sign_language_w.svg',
-    'x': 'https://upload.wikimedia.org/wikipedia/commons/3/30/Sign_language_x.svg',
-    'y': 'https://upload.wikimedia.org/wikipedia/commons/1/1d/Sign_language_y.svg',
-    'z': 'https://upload.wikimedia.org/wikipedia/commons/8/88/Sign_language_z.svg',
-    ' ': 'https://upload.wikimedia.org/wikipedia/commons/a/ac/No_image_available.svg'
-}
+# --- LOAD MODEL WITH DEBUGGING ---
+model = None
+load_status = "Starting..."
+
+try:
+    if os.path.exists('./model.p'):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model_dict = pickle.load(open('./model.p', 'rb'))
+        model = model_dict['model']
+        load_status = "Success"
+    else:
+        load_status = "File Missing"
+except Exception as e:
+    load_status = f"Error: {str(e)[:20]}" # Show first 20 chars of error
 
 st.title("🤝 Two-Way Sign Language Translator")
 tab1, tab2 = st.tabs(["📷 Live Sign Detector", "🔤 Text to Sign"])
 
-# ==========================
-# TAB 1: LIVE VIDEO
-# ==========================
 with tab1:
     st.header("Real-Time Hand Tracking")
+    
+    # Show status at the top
+    if load_status == "Success":
+        st.success("Brain Loaded! System Ready.")
+    else:
+        st.error(f"Brain Status: {load_status}")
+
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        st.caption("Press 'f' for Fullscreen | 'Esc' to Exit")
-
         class HandDetectorProcessor(VideoProcessorBase):
             def __init__(self):
                 self.mp_hands = mp.solutions.hands
@@ -63,72 +53,61 @@ with tab1:
                     min_detection_confidence=0.5
                 )
 
-            def detect_gesture(self, landmarks):
-                thumb_tip = landmarks[4].x
-                thumb_ip = landmarks[3].x
-                index_tip = landmarks[8].y
-                index_pip = landmarks[6].y
-                middle_tip = landmarks[12].y
-                middle_pip = landmarks[10].y
-                ring_tip = landmarks[16].y
-                ring_pip = landmarks[14].y
-                pinky_tip = landmarks[20].y
-                pinky_pip = landmarks[18].y
-
-                fingers = []
-                fingers.append(1 if thumb_tip < thumb_ip else 0)
-                fingers.append(1 if index_tip < index_pip else 0)
-                fingers.append(1 if middle_tip < middle_pip else 0)
-                fingers.append(1 if ring_tip < ring_pip else 0)
-                fingers.append(1 if pinky_tip < pinky_pip else 0)
-
-                if fingers == [0, 1, 1, 0, 0]:
-                    return "VICTORY (V)"
-                elif fingers == [1, 1, 1, 1, 1]:
-                    return "HELLO / HIGH FIVE"
-                elif fingers == [0, 0, 0, 0, 0]:
-                    return "FIST / ROCK"
-                elif fingers == [1, 1, 0, 0, 1]:
-                    return "I LOVE YOU"
-                elif fingers == [0, 1, 0, 0, 0]:
-                    return "ONE"
-                else:
-                    return ""
-
             def recv(self, frame):
                 img = frame.to_ndarray(format="bgr24")
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 results = self.hands.process(img_rgb)
                 
-                gesture_text = ""
+                # Default status text on video
+                status_text = f"Model: {load_status}"
+                color = (0, 0, 255) # Red
+
                 if results.multi_hand_landmarks:
                     for hand_landmarks in results.multi_hand_landmarks:
                         self.mp_draw.draw_landmarks(img, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
-                        gesture_text = self.detect_gesture(hand_landmarks.landmark)
-                        cv2.putText(img, gesture_text, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 5)
-                        cv2.putText(img, gesture_text, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        
+                        # Data Prep
+                        data_aux = []
+                        x_ = []
+                        y_ = []
+
+                        for i in range(len(hand_landmarks.landmark)):
+                            x = hand_landmarks.landmark[i].x
+                            y = hand_landmarks.landmark[i].y
+                            x_.append(x)
+                            y_.append(y)
+
+                        for i in range(len(hand_landmarks.landmark)):
+                            x = hand_landmarks.landmark[i].x
+                            y = hand_landmarks.landmark[i].y
+                            data_aux.append(x - min(x_))
+                            data_aux.append(y - min(y_))
+
+                        # DEBUGGING LOGIC
+                        if model:
+                            try:
+                                # We try predicting regardless of shape to see the error
+                                prediction = model.predict([data_aux])
+                                predicted_char = prediction[0]
+                                
+                                # If successful, draw Green Box
+                                cv2.rectangle(img, (0, 0), (160, 60), (0, 0, 0), -1)
+                                cv2.putText(img, predicted_char, (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
+                                status_text = "Predicting"
+                                color = (0, 255, 0)
+                            except Exception as e:
+                                # If shape doesn't match, print the required shape
+                                status_text = f"Shape Err: Needs {getattr(model, 'n_features_in_', '?')}"
+                                color = (0, 255, 255) # Yellow
+                        else:
+                            status_text = "No Model"
+
+                # Draw Debug Text on bottom of video
+                cv2.putText(img, status_text, (10, img.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
                 return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-        webrtc_streamer(
-            key="sign-language",
-            mode=WebRtcMode.SENDRECV,
-            video_processor_factory=HandDetectorProcessor,
-            media_stream_constraints={"video": True, "audio": False},
-            async_processing=True,
-        )
-
-    components.html(
-        """<script>
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'f' || e.key === 'F') {
-                const video = parent.document.querySelector('video');
-                if (video) { video.requestFullscreen(); }
-            }
-        });
-        </script>""",
-        height=0, width=0
-    )
+        webrtc_streamer(key="sign-language", mode=WebRtcMode.SENDRECV, video_processor_factory=HandDetectorProcessor, media_stream_constraints={"video": True, "audio": False}, async_processing=True)
 
 # ==========================
 # TAB 2: TEXT TO SIGN (HTML HACK)
