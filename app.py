@@ -2,12 +2,13 @@ import streamlit as st
 import cv2
 import numpy as np
 import mediapipe as mp
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 
 # --- CONFIG & ASSETS ---
-st.set_page_config(layout="wide", page_title="Two-Way Sign Language")
+st.set_page_config(layout="wide", page_title="Live Sign Language")
 
-# Publicly available ASL images (Using a reliable GitHub source)
-# You can replace these URLs with your own images later if you want specific styles
+# Dictionary for Text-to-Sign (Same as before)
 ASL_IMAGES = {
     'a': 'https://upload.wikimedia.org/wikipedia/commons/2/27/Sign_language_a.svg',
     'b': 'https://upload.wikimedia.org/wikipedia/commons/1/18/Sign_language_b.svg',
@@ -35,65 +36,89 @@ ASL_IMAGES = {
     'x': 'https://upload.wikimedia.org/wikipedia/commons/3/30/Sign_language_x.svg',
     'y': 'https://upload.wikimedia.org/wikipedia/commons/1/1d/Sign_language_y.svg',
     'z': 'https://upload.wikimedia.org/wikipedia/commons/8/88/Sign_language_z.svg',
-    ' ': 'https://upload.wikimedia.org/wikipedia/commons/a/ac/No_image_available.svg' # Placeholder for space
+    ' ': 'https://upload.wikimedia.org/wikipedia/commons/a/ac/No_image_available.svg'
 }
 
 st.title("🤝 Two-Way Sign Language Translator")
 
-# --- TABS FOR NAVIGATION ---
-tab1, tab2 = st.tabs(["📷 Detect Signs (Camera)", "🔤 Text to Sign"])
+tab1, tab2 = st.tabs(["📷 Live Sign Detector", "🔤 Text to Sign"])
 
 # ==========================
-# TAB 1: CAMERA DETECTION
+# TAB 1: LIVE VIDEO (WebRTC)
 # ==========================
 with tab1:
-    st.header("Sign Language Detector")
-    st.text("Show your hand to the camera to see the skeleton tracking.")
+    st.header("Real-Time Hand Tracking")
+    st.markdown("Wait for the video to load. It might take a few seconds to connect.")
 
-    # Setup MediaPipe
-    mp_hands = mp.solutions.hands
-    mp_draw = mp.solutions.drawing_utils
-    hands = mp_hands.Hands(static_image_mode=True, max_num_hands=2, min_detection_confidence=0.5)
+    # 1. Define the Processor Class
+    class HandDetectorProcessor(VideoProcessorBase):
+        def __init__(self):
+            # Initialize MediaPipe Hands once
+            self.mp_hands = mp.solutions.hands
+            self.mp_draw = mp.solutions.drawing_utils
+            self.hands = self.mp_hands.Hands(
+                static_image_mode=False,
+                max_num_hands=2,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
 
-    img_file_buffer = st.camera_input("Take a picture")
+        def recv(self, frame):
+            # 2. Get the frame from the webcam
+            img = frame.to_ndarray(format="bgr24")
+            
+            # 3. Process the frame
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            results = self.hands.process(img_rgb)
 
-    if img_file_buffer is not None:
-        file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
-        img = cv2.imdecode(file_bytes, 1)
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        results = hands.process(img_rgb)
-        
-        if results.multi_hand_landmarks:
-            st.success("Hand Detected! Processing skeleton...")
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_draw.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-        else:
-            st.warning("No hand detected. Try moving closer or checking lighting.")
+            # 4. Draw Landmarks
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    self.mp_draw.draw_landmarks(
+                        img, 
+                        hand_landmarks, 
+                        self.mp_hands.HAND_CONNECTIONS
+                    )
+            
+            # 5. Return the processed frame
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-        st.image(img, channels="BGR")
+    # 6. Start the Streamer
+    webrtc_streamer(
+        key="sign-language",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=HandDetectorProcessor,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
 
 # ==========================
 # TAB 2: TEXT TO SIGN
 # ==========================
 with tab2:
     st.header("Text to Sign Language")
-    st.text("Type a word below to see how to sign it.")
-    
     user_input = st.text_input("Enter text (A-Z only):", "").lower()
     
     if user_input:
         st.write(f"Translating: **{user_input.upper()}**")
         
-        # Display images in a row
-        cols = st.columns(len(user_input))
+        # Create a container for the images
+        html_code = '<div style="display: flex; flex-wrap: wrap; gap: 10px;">'
         
-        for i, char in enumerate(user_input):
+        for char in user_input:
             if char in ASL_IMAGES:
-                with cols[i]:
-                    st.image(ASL_IMAGES[char], caption=char.upper(), width=100)
+                # We use HTML <img> tags directly so YOUR browser fetches them, not the server
+                html_code += f'''
+                <div style="text-align: center;">
+                    <img src="{ASL_IMAGES[char]}" width="100" style="border-radius: 10px; border: 2px solid #333;">
+                    <br><b>{char.upper()}</b>
+                </div>
+                '''
             elif char == " ":
-                with cols[i]:
-                    st.write("  ") # Empty space
-            else:
-                st.error(f"Character '{char}' not found.")
+                # Add a spacer for spaces
+                html_code += '<div style="width: 50px;"></div>'
+        
+        html_code += '</div>'
+        
+        # Render the HTML
+        st.markdown(html_code, unsafe_allow_html=True)
