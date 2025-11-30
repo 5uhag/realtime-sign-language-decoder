@@ -1,4 +1,4 @@
-# 🤝 Two-Way Sign Language Translator
+hu# 🤝 Two-Way Sign Language Translator
 
 <div align="center">
 
@@ -67,6 +67,5 @@ If you want to test this on your own machine:
 ---
 
 <div align="center">
-  <b>Built by <a href="https://github.com/5uhag">@5uhag</b>
-href="https://github.com/ningaraj-mw">@Ningaraj</a></b>
+  <b>Built by <a href="https://github.com/5uhag">@5uhag</a> and <a href="https://github.com/ningaraj-mw">@Ningaraj</a></b>
 </div>
