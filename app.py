@@ -12,10 +12,9 @@ import os
 # --- CONFIG ---
 st.set_page_config(layout="wide", page_title="Live Sign Language")
 
-# --- LOAD MODEL WITH DEBUGGING ---
+# --- LOAD MODEL ---
 model = None
 load_status = "Starting..."
-
 try:
     if os.path.exists('./model.p'):
         with warnings.catch_warnings():
@@ -26,22 +25,22 @@ try:
     else:
         load_status = "File Missing"
 except Exception as e:
-    load_status = f"Error: {str(e)[:20]}" # Show first 20 chars of error
+    load_status = f"Error: {str(e)[:20]}"
 
 st.title("🤝 Two-Way Sign Language Translator")
 tab1, tab2 = st.tabs(["📷 Live Sign Detector", "🔤 Text to Sign"])
 
+# ==========================
+# TAB 1: LIVE AI PREDICTION
+# ==========================
 with tab1:
     st.header("Real-Time Hand Tracking")
-    
-    # Show status at the top
     if load_status == "Success":
         st.success("Brain Loaded! System Ready.")
     else:
         st.error(f"Brain Status: {load_status}")
-
+        
     col1, col2, col3 = st.columns([1, 2, 1])
-
     with col2:
         class HandDetectorProcessor(VideoProcessorBase):
             def __init__(self):
@@ -58,59 +57,59 @@ with tab1:
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 results = self.hands.process(img_rgb)
                 
-                # Default status text on video
-                status_text = f"Model: {load_status}"
-                color = (0, 0, 255) # Red
+                predicted_char = ""
+                status_text = "Wait..."
+                color = (0, 0, 255)
 
                 if results.multi_hand_landmarks:
                     for hand_landmarks in results.multi_hand_landmarks:
                         self.mp_draw.draw_landmarks(img, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
                         
-                        # Data Prep
                         data_aux = []
                         x_ = []
                         y_ = []
-
                         for i in range(len(hand_landmarks.landmark)):
                             x = hand_landmarks.landmark[i].x
                             y = hand_landmarks.landmark[i].y
                             x_.append(x)
                             y_.append(y)
-
                         for i in range(len(hand_landmarks.landmark)):
                             x = hand_landmarks.landmark[i].x
                             y = hand_landmarks.landmark[i].y
                             data_aux.append(x - min(x_))
                             data_aux.append(y - min(y_))
 
-                        # DEBUGGING LOGIC
                         if model:
                             try:
-                                # We try predicting regardless of shape to see the error
                                 prediction = model.predict([data_aux])
                                 predicted_char = prediction[0]
-                                
-                                # If successful, draw Green Box
                                 cv2.rectangle(img, (0, 0), (160, 60), (0, 0, 0), -1)
                                 cv2.putText(img, predicted_char, (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
-                                status_text = "Predicting"
+                                status_text = "Active"
                                 color = (0, 255, 0)
-                            except Exception as e:
-                                # If shape doesn't match, print the required shape
-                                status_text = f"Shape Err: Needs {getattr(model, 'n_features_in_', '?')}"
-                                color = (0, 255, 255) # Yellow
-                        else:
-                            status_text = "No Model"
+                            except:
+                                status_text = "Shape Err"
+                                color = (0, 255, 255)
 
-                # Draw Debug Text on bottom of video
                 cv2.putText(img, status_text, (10, img.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-
                 return av.VideoFrame.from_ndarray(img, format="bgr24")
 
         webrtc_streamer(key="sign-language", mode=WebRtcMode.SENDRECV, video_processor_factory=HandDetectorProcessor, media_stream_constraints={"video": True, "audio": False}, async_processing=True)
 
+    components.html(
+        """<script>
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'f' || e.key === 'F') {
+                const video = parent.document.querySelector('video');
+                if (video) { video.requestFullscreen(); }
+            }
+        });
+        </script>""",
+        height=0, width=0
+    )
+
 # ==========================
-# TAB 2: TEXT TO SIGN (HTML HACK)
+# TAB 2: LOCAL SVG FILES
 # ==========================
 with tab2:
     st.header("Text to Sign Language")
@@ -119,22 +118,15 @@ with tab2:
     user_input = st.text_input("Type here (A-Z):", "").lower()
     
     if user_input:
-        # Start HTML Container
-        html_code = '<div style="display: flex; flex-wrap: wrap; gap: 15px; justify-content: center;">'
-        
-        for char in user_input:
-            if char in ASL_IMAGES:
-                # Direct HTML Image Injection
-                html_code += f'''
-                <div style="text-align: center; margin: 5px;">
-                    <img src="{ASL_IMAGES[char]}" width="120" style="border-radius: 10px; box-shadow: 0px 4px 6px rgba(0,0,0,0.3);">
-                    <br><b style="color: white; font-size: 20px;">{char.upper()}</b>
-                </div>
-                '''
+        cols = st.columns(6)
+        for i, char in enumerate(user_input):
+            if 'a' <= char <= 'z':
+                # LOOK FOR .svg FILES IN THE 'asl_images' FOLDER
+                img_path = f"asl_images/{char}.svg"
+                
+                if os.path.exists(img_path):
+                    cols[i % 6].image(img_path, caption=char.upper(), width=100)
+                else:
+                    cols[i % 6].error(f"Missing: {char.upper()}")
             elif char == " ":
-                html_code += '<div style="width: 50px;"></div>' # Spacer
-        
-        html_code += '</div>'
-        
-        # RENDER HTML (This flag is the key!)
-        st.markdown(html_code, unsafe_allow_html=True)
+                cols[i % 6].write("   ")
