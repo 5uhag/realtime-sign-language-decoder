@@ -1,4 +1,4 @@
-hu# 🤝 Two-Way Sign Language Translator
+ 🤝 Two-Way Sign Language Translator
 
 <div align="center">
 
